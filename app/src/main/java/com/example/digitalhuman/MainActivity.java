@@ -14,6 +14,8 @@ import android.view.WindowManager;
 import android.webkit.PermissionRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -21,12 +23,16 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
+
 public class MainActivity extends AppCompatActivity {
 
-    // ⚠️ 重要：为了用麦克风，请尝试尽量使用 https (即使证书是自签名的也没关系，下面代码会忽略错误)
-    // 如果你的服务器实在没有 https，只能保留 http，但麦克风大概率会被浏览器内核拦截
-    private static final String TARGET_URL = "https://172.16.2.211:8000"; 
-    // ↑↑↑ 请记得把这里改成 https (端口如果变了也要改)
+    // 🔴 这里的地址保持为你服务器的 HTTPS 地址
+    // 网页里的资源引用保持相对路径（例如 src="bg.png"）
+    private static final String TARGET_URL = "https://172.16.2.211:8000";
 
     private WebView myWebView;
 
@@ -35,40 +41,32 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // === 修复 1：彻底消灭白边 (背景黑 + 铺满摄像头) ===
-        // 去掉标题栏
+        // === 界面设置 (保持不变) ===
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        // 设置全屏 Flag
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, 
                              WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        
-        // 关键：把窗口背景设为纯黑，防止刘海处露出白色底色
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
 
-        // 适配刘海屏/挖孔屏
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams lp = getWindow().getAttributes();
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             getWindow().setAttributes(lp);
         }
 
-        // 隐藏导航栏，并开启"Layout"标志，确保内容延伸到系统栏后面
         int uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN  // 关键：让布局延伸到状态栏区域
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION // 关键：让布局延伸到导航栏区域
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
         
         getWindow().getDecorView().setSystemUiVisibility(uiOptions);
-        // ===========================================
 
         myWebView = new WebView(this);
-        // 防止 WebView 自身有背景色导致闪烁
         myWebView.setBackgroundColor(Color.BLACK);
         setContentView(myWebView);
 
-        // 检查权限
+        // 权限申请
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 100);
@@ -79,40 +77,74 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setDomStorageEnabled(true);
         webSettings.setMediaPlaybackRequiresUserGesture(false);
         
-        // 允许 HTTP 和 HTTPS 混合内容 (为了兼容性)
+        // 允许跨域和混合内容（为了兼容性）
+        webSettings.setAllowFileAccess(true);
+        webSettings.setAllowContentAccess(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
 
-        // === 修复 2：布局适配微调 ===
-        // 伪装成电脑 Chrome
+        // 伪装成电脑浏览器（解决布局问题）
         String pcUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
         webSettings.setUserAgentString(pcUserAgent);
-
-        // 开启宽视口（让网页以为自己在宽屏上）
-        webSettings.setUseWideViewPort(true);
-        // 开启概览模式（自动缩小网页以适应手机屏幕宽度，解决按钮错位）
-        webSettings.setLoadWithOverviewMode(true);
         
-        // 强制初始缩放比例，防止系统字号影响布局
-        webSettings.setTextZoom(100);
-        // ======================================
+        webSettings.setUseWideViewPort(true);
+        webSettings.setLoadWithOverviewMode(true);
 
         myWebView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
-                // 自动批准麦克风权限
                 request.grant(request.getResources());
             }
         });
 
         myWebView.setWebViewClient(new WebViewClient() {
-            // === 修复 3：忽略 HTTPS 证书错误 (允许自签名/IP地址的 HTTPS) ===
+            // 忽略 SSL 错误
             @Override
             public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                // ⚠️ 这一行非常关键：告诉 WebView "不要管证书不对，继续加载！"
-                // 这样你就可以用 https://172.x.x.x 而不报错
                 handler.proceed();
+            }
+
+            // 🌟🌟🌟 核心修改：拦截资源请求，替换为本地文件 🌟🌟🌟
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                
+                // 1. 拦截背景图片
+                if (url.contains("bg.png")) {
+                    try {
+                        // 打开本地 assets 里的 bg.png
+                        InputStream is = getAssets().open("bg.png");
+                        // 伪造一个 HTTP 响应返回给网页
+                        return new WebResourceResponse("image/png", "UTF-8", is);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                // 2. 拦截待机视频 (hao_wait.mp4)
+                if (url.contains("hao_wait.mp4")) {
+                    try {
+                        InputStream is = getAssets().open("hao_wait.mp4");
+                        // 注意：MIME 类型要是 video/mp4
+                        return new WebResourceResponse("video/mp4", "UTF-8", is);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                // 3. 拦截说话视频 (hutao_talking.mp4)
+                if (url.contains("hutao_talking.mp4")) {
+                    try {
+                        InputStream is = getAssets().open("hutao_talking.mp4");
+                        return new WebResourceResponse("video/mp4", "UTF-8", is);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                // 其他请求（如 API 接口）走正常网络
+                return super.shouldInterceptRequest(view, request);
             }
         });
 

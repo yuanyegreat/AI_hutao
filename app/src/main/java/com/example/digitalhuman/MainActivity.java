@@ -4,13 +4,13 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo; // 引入这个
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -42,16 +42,24 @@ import javax.net.ssl.X509TrustManager;
 
 public class MainActivity extends AppCompatActivity {
 
-    // 你的服务器地址
+    // 🌟 请确认这是你最新的服务器地址
     private static final String TARGET_URL = "https://172.16.2.211:8000";
 
     private WebView myWebView;
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint({"SetJavaScriptEnabled", "SourceLockedOrientationActivity"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        trustAllHosts();
+        
+        // === 1. 强制竖屏 (双重保险：代码层也锁死) ===
+        try {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        trustAllHosts(); // 允许自签名证书
 
         // === 竖屏沉浸式设置 ===
         requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -65,13 +73,19 @@ public class MainActivity extends AppCompatActivity {
         }
         
         // 隐藏导航栏
-        int uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+        int uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION 
+                      | View.SYSTEM_UI_FLAG_FULLSCREEN 
+                      | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY 
+                      | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN 
+                      | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION 
+                      | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
         getWindow().getDecorView().setSystemUiVisibility(uiOptions);
 
         myWebView = new WebView(this);
         myWebView.setBackgroundColor(Color.BLACK);
         setContentView(myWebView);
 
+        // 权限检查
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 100);
         }
@@ -82,13 +96,13 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setMediaPlaybackRequiresUserGesture(false);
         webSettings.setAllowFileAccess(true);
         webSettings.setAllowContentAccess(true);
+        // 保持原生比例，不进行强制缩放，适应竖屏设计
+        webSettings.setUseWideViewPort(false);
+        webSettings.setLoadWithOverviewMode(false);
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
-
-        // 🌟 删除掉了伪装成电脑的代码 (setUserAgentString)
-        // 🌟 删除掉了强制缩放的代码 (setUseWideViewPort, setLoadWithOverviewMode)
-        // 这样网页会以原生的 100% 比例渲染，显示效果最清晰
 
         myWebView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -100,16 +114,20 @@ public class MainActivity extends AppCompatActivity {
         myWebView.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                handler.proceed();
+                handler.proceed(); // 忽略 SSL 错误
             }
 
-            // 🌟🌟🌟 缓存拦截逻辑 (保持不变) 🌟🌟🌟
+            // === 2. 背景与视频缓存拦截 ===
+            // 只要网页请求这些文件，就会走本地缓存逻辑
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                
+                // ⚠️ 注意：如果你的竖屏视频改名了，这里也要改
                 if (url.endsWith("bg.png")) return checkUpdateAndDownload(url, "bg.png", "image/png");
                 if (url.endsWith("hao_wait.mp4")) return checkUpdateAndDownload(url, "hao_wait.mp4", "video/mp4");
                 if (url.endsWith("hutao_talking.mp4")) return checkUpdateAndDownload(url, "hutao_talking.mp4", "video/mp4");
+                
                 return super.shouldInterceptRequest(view, request);
             }
         });
@@ -117,7 +135,9 @@ public class MainActivity extends AppCompatActivity {
         myWebView.loadUrl(TARGET_URL);
     }
 
-    // 🛠️ 智能缓存下载器 (逻辑保持不变)
+    // 🛠️ 智能缓存逻辑 (保持不变，这部分逻辑很完善)
+    // 逻辑：本地有 -> 检查服务器更新 -> 如果服务器新则下载 -> 返回本地文件
+    // 优势：支持离线播放（只要缓存过一次），支持热更新
     private WebResourceResponse checkUpdateAndDownload(String urlString, String fileName, String mimeType) {
         try {
             File cacheDir = new File(getFilesDir(), "smart_cache");
@@ -138,17 +158,19 @@ public class MainActivity extends AppCompatActivity {
                     ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
                 }
                 conn.setRequestMethod("HEAD");
-                conn.setConnectTimeout(2000); 
+                conn.setConnectTimeout(1500); // 超时稍微缩短一点，避免卡顿
                 conn.connect();
 
                 if (conn.getResponseCode() == 200) {
                     serverLastModified = conn.getLastModified();
+                    // 如果服务器文件更新，或者本地文件大小为0，则下载
                     if (serverLastModified > localLastModified || !localFile.exists() || localFile.length() == 0) {
                         needDownload = true;
                     }
                 }
                 conn.disconnect();
             } catch (Exception e) {
+                // 网络检测失败，如果本地也没有，就返回 null 让 WebView 自己去联网加载
                 if (!localFile.exists()) return null;
             }
 

@@ -16,10 +16,15 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+
+    # 新增步骤：强制安装 Gradle 8.2 (稳定兼容版)
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.2'
 
     - name: Build APK
-      # 使用 GitHub 服务器自带的 Gradle 直接构建
+      # 注意：这里改回用 gradle 命令，因为上面已经配置好了 8.2 环境
       run: gradle assembleDebug --no-daemon
 
     - name: Upload APK

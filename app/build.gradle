@@ -7,7 +7,7 @@ android {
     compileSdk 33
 
     defaultConfig {
-        applicationId "com.example.digitalhuman"
+        applicationId "com.example.digitalhuman.fufu"
         minSdk 24
         targetSdk 33
         versionCode 2

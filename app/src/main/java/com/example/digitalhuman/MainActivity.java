@@ -125,8 +125,8 @@ public class MainActivity extends AppCompatActivity {
                 
                 // ⚠️ 注意：如果你的竖屏视频改名了，这里也要改
                 if (url.endsWith("bg.png")) return checkUpdateAndDownload(url, "bg.png", "image/png");
-                if (url.endsWith("hao_wait.mp4")) return checkUpdateAndDownload(url, "hao_wait.mp4", "video/mp4");
-                if (url.endsWith("hutao_talking.mp4")) return checkUpdateAndDownload(url, "hutao_talking.mp4", "video/mp4");
+                if (url.endsWith("hao_wait.mp4")) return checkUpdateAndDownload(url, "wait.mp4", "video/mp4");
+                if (url.endsWith("hutao_talking.mp4")) return checkUpdateAndDownload(url, "talking.mp4", "video/mp4");
                 
                 return super.shouldInterceptRequest(view, request);
             }

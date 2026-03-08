@@ -22,6 +22,7 @@ jobs:
       uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: '8.2'
+        cache-disabled: true  # <--- 【关键修改】强行关闭缓存，绕过 GitHub 瘫痪的服务器
 
     - name: Build APK
       # 注意：这里改回用 gradle 命令，因为上面已经配置好了 8.2 环境

@@ -3,15 +3,19 @@ plugins {
 }
 
 android {
-    namespace 'com.example.digitalhuman'
+    // 保持 namespace 不变，这样你的代码就不需要大面积报错修改
+    namespace 'com.example.digitalhuman' 
     compileSdk 33
 
     defaultConfig {
-        applicationId "com.example.digitalhuman.fufu"
+        // 【关键修改点】修改了 applicationId，系统就会把它当成一个新应用
+        applicationId "com.example.digitalhuman.fufu.v2" 
+        
         minSdk 24
         targetSdk 33
-        versionCode 2
-        versionName "1.1"
+        // 既然是全新的应用，版本号建议重新从 1 开始计算
+        versionCode 1 
+        versionName "1.0" 
     }
 }
 
